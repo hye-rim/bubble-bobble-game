@@ -64,6 +64,7 @@ const sfx = {
   start: () => melody([392, 523, 659, 784, 1047], 100),
   clear: () => melody([523, 659, 784, 1047, 1319, 1568], 100),
   hurry: () => melody([880, 0, 880, 0, 880], 130, 'sawtooth', 0.05),
+  eshot: (k) => (k === 'laser' ? tone(900, 0.12, 'square', 0.03, -500) : k === 'fire' ? tone(220, 0.15, 'sawtooth', 0.03, 200) : tone(180, 0.1, 'triangle', 0.04)),
   letter: () => melody([880, 1175], 70, 'sine', 0.07),
   extend: () => melody([523, 659, 784, 1047, 1319, 1568, 2093], 90, 'square', 0.05),
   special: (t) => (t === 'water' ? melody([600, 500, 400, 300], 70, 'sine', 0.07) : t === 'lightning' ? melody([1500, 400, 1800, 300], 40, 'sawtooth', 0.05) : melody([200, 260, 220, 300], 70, 'sawtooth', 0.05)),
@@ -166,6 +167,13 @@ function pause() {
   showOverlay('<h2>일시정지</h2><p>P 키나 아래 버튼으로 계속해요</p><button id="startBtn">계속하기</button>');
 }
 function resume() { if (state !== 'paused') return; state = pausedFrom; hideOverlay(); }
+function gameWon() {
+  state = 'over';
+  const rec = G.score > best;
+  if (rec) { best = G.score; store.set('bubbleBest', String(best)); }
+  sfx.clear();
+  showOverlay(`<h2>🎉 100판 클리어!</h2><p class="big">${G.score.toLocaleString()}점</p><p>터뜨린 적 ${G.stats.pops}마리${rec ? '<br>🏆 최고 기록!' : ''}</p><button id="startBtn">다시 하기</button>`);
+}
 function gameOver() {
   state = 'over';
   const rec = G.score > best;
@@ -179,7 +187,7 @@ function handleEvents() {
     if (e.t === 'jump') { sfx.jump(); tutorialSignal('jump'); }
     else if (e.t === 'shoot') { sfx.shoot(); tutorialSignal('shoot'); }
     else if (e.t === 'trap') { sfx.trap(); tutorialSignal('trap'); fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.35 }); }
-    else if (e.t === 'pop') { sfx.pop(); fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.25 }); }
+    else if (e.t === 'pop') { sfx.pop(); fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.25 }); if (e.pts) fxs.push({ kind: 'text', x: e.x, y: e.y - 4, t: 0, life: 0.6, text: String(e.pts), color: '#bfe9ff' }); }
     else if (e.t === 'kill') {
       sfx.kill(e.chain); tutorialSignal('kill');
       fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.4 }, { kind: 'text', x: e.x, y: e.y - 6, t: 0, life: 1, text: String(e.pts) });
@@ -197,6 +205,8 @@ function handleEvents() {
     else if (e.t === 'crash') sfx.crash();
     else if (e.t === 'break') { sfx.brk(); fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.3, red: true }); }
     else if (e.t === 'extraLife') sfx.life();
+    else if (e.t === 'enemyShot') sfx.eshot(e.kind);
+    else if (e.t === 'win') gameWon();
     else if (e.t === 'hurry') { sfx.hurry(); setBanner('HURRY UP!', '적이 화났어요', '#ff6a5a', 2.4); }
     else if (e.t === 'baron') setBanner('조심!', '훼방꾼 고래가 쫓아와요', '#7fc8ff', 2.4);
     else if (e.t === 'clear') { sfx.clear(); setBanner('ROUND CLEAR', '', '#7fe08a', 2.6); }
@@ -267,22 +277,58 @@ let lastDx = 0;
 function drawEnemyBody(kind, cx, cy, angry, t, face, scale = 1) {
   ctx.save();
   ctx.translate(cx, cy); ctx.scale(face * scale, scale);
+  const eye = (x, y) => { ctx.fillStyle = '#fff'; ctx.fillRect(x, y, 4, 4); ctx.fillStyle = '#111'; ctx.fillRect(x + 2, y + 1, 2, 3); };
   if (kind === 'zen') {
     ctx.fillStyle = angry ? '#e84a3a' : '#7a8ee8'; ctx.fillRect(-7, -6, 14, 12);
     ctx.fillStyle = angry ? '#a02a20' : '#4a5ab8'; ctx.fillRect(-7, 4, 14, 2);
-    ctx.fillStyle = '#fff'; ctx.fillRect(1, -4, 5, 5); ctx.fillStyle = '#111'; ctx.fillRect(3, -3, 2, 3);
+    eye(1, -4);
     ctx.fillStyle = '#e8c83a'; ctx.fillRect(-9, -2 + (Math.floor(t * 6) % 2), 3, 4);                        // 태엽
     ctx.fillStyle = '#5a5a5a'; ctx.fillRect(-5, 6, 4, 2); ctx.fillRect(2, 6, 4, 2);
+  } else if (kind === 'mighta') {                                                                           // 마이타: 두건을 쓴 마법사
+    ctx.fillStyle = angry ? '#e84a3a' : '#8a5ae8'; ctx.beginPath(); ctx.moveTo(-7, 7); ctx.lineTo(-5, -4); ctx.lineTo(0, -8); ctx.lineTo(5, -4); ctx.lineTo(7, 7); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#2a1a3a'; ctx.fillRect(-1, -5, 6, 6); eye(0, -4);
+    ctx.fillStyle = '#c8b0ff'; ctx.fillRect(-7, 6, 14, 2);
+    ctx.fillStyle = '#9a9aa6'; ctx.beginPath(); ctx.arc(8, 0, 3, 0, 7); ctx.fill();                       // 던질 바위
   } else if (kind === 'pulpul') {
     ctx.fillStyle = angry ? '#e8453a' : '#c05ae8'; ctx.beginPath(); ctx.ellipse(0, -1, 7, 7, 0, 0, 7); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.fillRect(-4, -4, 3, 3); ctx.fillRect(1, -4, 3, 3); ctx.fillStyle = '#111'; ctx.fillRect(-3, -3, 1, 2); ctx.fillRect(2, -3, 1, 2);
+    eye(-4, -4);
     ctx.fillStyle = angry ? '#a02a20' : '#8a3ab8'; const w = Math.floor(t * 8) % 2; ctx.fillRect(-7, 5, 3, 3 + w); ctx.fillRect(-1, 5, 3, 4 - w); ctx.fillRect(4, 5, 3, 3 + w);
-  } else {
+  } else if (kind === 'monsta') {
     ctx.fillStyle = angry ? '#ff8a7a' : '#f2f2ff'; ctx.beginPath(); ctx.ellipse(0, 0, 8, 7, 0, 0, 7); ctx.fill();
     ctx.fillStyle = '#111'; ctx.fillRect(1, -3, 3, 3); ctx.fillRect(-4, -3, 3, 3);
     ctx.fillStyle = angry ? '#e8453a' : '#a8a8d8'; ctx.fillRect(-8, 3, 16, 3);
+  } else if (kind === 'banebou') {                                                                          // 바네보: 용수철 몸
+    ctx.strokeStyle = angry ? '#e8453a' : '#d8d8e8'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-5, 7); ctx.lineTo(5, 4); ctx.lineTo(-5, 1); ctx.lineTo(5, -2); ctx.stroke();
+    ctx.fillStyle = angry ? '#e8453a' : '#ff8a5a'; ctx.beginPath(); ctx.arc(0, -4, 6, 0, 7); ctx.fill();
+    eye(0, -7);
+  } else if (kind === 'hidegons') {                                                                         // 히데곤: 불을 쏘는 초록 용
+    ctx.fillStyle = angry ? '#e8453a' : '#3ab43a'; ctx.beginPath(); ctx.ellipse(-1, 1, 7, 6, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = angry ? '#ffb04a' : '#58d458'; ctx.fillRect(2, -5, 7, 6);
+    ctx.fillStyle = '#ff6a2a'; ctx.fillRect(-7, -6, 3, 3); ctx.fillRect(-3, -7, 3, 3);
+    eye(3, -4); ctx.fillStyle = '#ffe14a'; ctx.fillRect(9, -3, 2, 2);
+    ctx.fillStyle = '#e8c83a'; ctx.fillRect(-5, 6, 3, 2); ctx.fillRect(1, 6, 3, 2);
+  } else if (kind === 'drunk') {                                                                            // 드렁크: 병을 던지는 술꾼
+    ctx.fillStyle = angry ? '#e84a3a' : '#e8a03a'; ctx.fillRect(-6, -2, 12, 9);
+    ctx.fillStyle = '#ffd0a0'; ctx.fillRect(-5, -8, 10, 7); eye(1, -6);
+    ctx.fillStyle = '#e8453a'; ctx.fillRect(4, -3, 3, 2);
+    ctx.fillStyle = '#3ab43a'; ctx.fillRect(6, -2, 3, 6); ctx.fillStyle = '#7ad87a'; ctx.fillRect(7, -5, 1, 3);
+  } else if (kind === 'invader') {                                                                          // 인베이더: 오락실 침략자 모양
+    ctx.fillStyle = angry ? '#ff6a6a' : '#6af26a';
+    const rows = ['..#....#..', '...#..#...', '..######..', '.##.##.##.', '##########', '#.######.#', '#.#....#.#', '...##.##..'];
+    rows.forEach((row, ry) => { for (let rx = 0; rx < 10; rx++) if (row[rx] === '#') ctx.fillRect(-7 + rx * 1.4, -6 + ry * 1.6, 1.5, 1.7); });
+    ctx.fillStyle = '#111'; ctx.fillRect(-3, -1, 2, 2); ctx.fillRect(2, -1, 2, 2);
   }
   ctx.restore();
+}
+function drawShots() {
+  for (const sh of G.shots || []) {
+    const x = sh.x, y = HUD + sh.y;
+    if (sh.kind === 'rock') { ctx.fillStyle = '#8a8a96'; ctx.beginPath(); ctx.arc(x, y, 4.5, 0, 7); ctx.fill(); ctx.fillStyle = '#b4b4c0'; ctx.fillRect(x - 2, y - 3, 2, 2); }
+    else if (sh.kind === 'fire') { ctx.fillStyle = Math.floor(clock * 14) % 2 ? '#ff6a2a' : '#ffc02a'; ctx.beginPath(); ctx.moveTo(x + (sh.vx > 0 ? 5 : -5), y); ctx.lineTo(x - (sh.vx > 0 ? 5 : -5), y - 4); ctx.lineTo(x - (sh.vx > 0 ? 5 : -5), y + 4); ctx.closePath(); ctx.fill(); }
+    else if (sh.kind === 'bottle') { ctx.save(); ctx.translate(x, y); ctx.rotate(clock * 12); ctx.fillStyle = '#3ab43a'; ctx.fillRect(-2, -5, 4, 10); ctx.fillStyle = '#7ad87a'; ctx.fillRect(-1, -7, 2, 3); ctx.restore(); }
+    else if (sh.kind === 'laser') { ctx.fillStyle = '#ff4a4a'; ctx.fillRect(x - 1, y - 5, 2, 10); ctx.fillStyle = '#fff'; ctx.fillRect(x - 0.5, y - 5, 1, 10); }
+  }
 }
 function drawEnemies() {
   for (const e of G.enemies) {
@@ -331,7 +377,7 @@ function drawItems() {
     } else if (it.type === 'speed') {
       ctx.fillStyle = '#e8453a'; ctx.fillRect(cx - 5, cy - 1, 10, 5); ctx.fillStyle = '#fff'; ctx.fillRect(cx - 5, cy + 3, 10, 1); ctx.fillRect(cx - 5, cy - 4, 4, 3);
     } else {
-      ctx.fillStyle = it.type === 'rate' ? '#4ae84a' : '#4a9aff'; ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, 7); ctx.fill();
+      ctx.fillStyle = it.type === 'rate' ? '#ffe14a' : '#4a9aff'; ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, 7); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.fillRect(cx - 4, cy - 1, 8, 2);
     }
   }
@@ -371,7 +417,7 @@ function drawHud() {
   // 사탕으로 얻은 힘
   const m = G.mods;
   let x = W - 20;
-  for (const [k, c] of [['speed', '#e8453a'], ['rate', '#4ae84a'], ['range', '#4a9aff']]) for (let i = 0; i < m[k]; i++) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, H + HUD - 7, 3.5, 0, 7); ctx.fill(); x -= 9; }
+  for (const [k, c] of [['speed', '#e8453a'], ['rate', '#ffe14a'], ['range', '#4a9aff']]) for (let i = 0; i < m[k]; i++) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, H + HUD - 7, 3.5, 0, 7); ctx.fill(); x -= 9; }
   // EXTEND 글자: 모은 것은 밝게
   ctx.textAlign = 'center'; ctx.font = 'bold 9px sans-serif';
   for (let i = 0; i < 6; i++) { ctx.fillStyle = G.extend[i] ? '#ffe14a' : 'rgba(255,255,255,.28)'; ctx.fillText(L.EXTEND_LETTERS[i], W / 2 - 25 + i * 10, H + HUD - 7); }
@@ -383,6 +429,7 @@ function draw() {
   drawBubbles();
   drawEnemies();
   drawPlayer();
+  drawShots();
   drawEffects();
   drawFx();
   drawHud();
