@@ -185,7 +185,7 @@ test('popping several trapped enemies in a row doubles the points', () => {
 test('an enemy stays trapped for seven seconds and then breaks out angry', () => {
   const st = calm();
   const e = sitting(st, 'zen', 120);
-  const b = { id: ++st.seq, x: 122, y: FLOOR_Y - 12, vx: 0, vy: 0, r: 8, age: 0, phase: 'shot', enemy: null, life: 8, dead: false };
+  const b = { id: ++st.seq, x: 122, y: FLOOR_Y - 12, vx: 100, vy: 0, r: 8, age: 0, phase: 'shot', enemy: null, life: 8, dead: false };   // 날아가는 중인 방울
   st.bubbles.push(b);
   st.player.x = 40;
   run(st, 0.05);
@@ -195,6 +195,35 @@ test('an enemy stays trapped for seven seconds and then breaks out angry', () =>
   assert.strictEqual(st.enemies.length, 1);
   assert.strictEqual(st.enemies[0].angry, true);
   assert.ok(e);
+});
+
+test('only a bubble that was just shot traps an enemy, a floating empty bubble does not', () => {
+  const st = calm();
+  const e = sitting(st, 'zen', 120);
+  const floating = { id: ++st.seq, x: 122, y: FLOOR_Y - 12, vx: 0, vy: 0, r: 8, age: 2, phase: 'float', enemy: null, life: 5, dead: false };
+  st.bubbles.push(floating);
+  st.player.x = 40;
+  run(st, 0.1);
+  assert.strictEqual(floating.enemy, null, 'the enemy touching a floating bubble is not trapped');
+  assert.ok(e.alive && st.enemies.includes(e), 'the enemy is still free');
+  assert.strictEqual(st.stats.traps, 0);
+});
+
+test('a bubble shot at an enemy traps it, but once it has turned into a floating bubble it no longer does', () => {
+  const near = calm();
+  const e1 = sitting(near, 'zen', 120);
+  near.player.x = 100; near.player.face = 1; L.shoot(near);
+  run(near, 0.5);
+  assert.ok(near.bubbles.some((b) => b.enemy), 'a bubble shot into the enemy traps it');
+  assert.ok(!e1.alive);
+  const late = calm();
+  const e2 = sitting(late, 'zen', 120);
+  late.bubbles.push({ id: ++late.seq, x: 60, y: FLOOR_Y - 12, vx: 0, vy: 0, r: 8, age: 1.5, phase: 'float', enemy: null, life: 6, dead: false });   // 쏜 지 오래된 방울
+  late.player.x = 200;
+  late.bubbles[0].x = 122;
+  run(late, 0.2);
+  assert.ok(e2.alive, 'a late floating bubble does not catch it');
+  assert.strictEqual(late.bubbles.filter((b) => b.enemy).length, 0);
 });
 
 test('an empty bubble pops by itself after a while, and touching it pops it too', () => {

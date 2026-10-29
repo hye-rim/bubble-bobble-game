@@ -514,9 +514,9 @@ function sub(st, h, input) {
       } else { b.dead = true; emit(st, { t: 'pop', x: b.x, y: b.y, trapped: false, expired: true }); }
     }
   }
-  // 방울이 적을 가둔다
+  // 방울이 적을 가둔다: 막 쏜 방울(날아가는 동안)만 가둔다. 이미 둥둥 떠오르는 빈 방울에는 적이 닿아도 아무 일 없다 (원작처럼)
   for (const b of st.bubbles) {
-    if (b.dead || b.enemy || b.letter !== undefined || b.special) continue;
+    if (b.dead || b.enemy || b.letter !== undefined || b.special || b.phase !== 'shot') continue;
     for (const e of st.enemies) {
       if (!e.alive || e.prot > 0) continue;
       const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
