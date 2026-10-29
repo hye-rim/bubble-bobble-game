@@ -239,20 +239,142 @@ test('touching an enemy costs a life, the character comes back with a shield, a 
   assert.strictEqual(s2.phase, 'over');
 });
 
-test('fruit is worth more on later levels and candies make you stronger until you lose a life', () => {
+test('fruit scores, candies and shoes make you stronger up to two times, and a lost life takes it away', () => {
   const st = calm();
   const fruit = { x: st.player.x, y: st.player.y, w: 10, h: 10, vx: 0, vy: 0, ground: true, kind: 'fruit', type: 'cherry', pts: 500, age: 0 };
   st.items.push(fruit); run(st, 0.05);
   assert.strictEqual(st.score, 500);
   const candy = (type) => { st.items.push({ x: st.player.x, y: st.player.y, w: 10, h: 10, vx: 0, vy: 0, ground: true, kind: 'candy', type, age: 0 }); run(st, 0.05); };
-  candy('shot'); candy('shot'); candy('shot'); candy('speed'); candy('range');
-  assert.strictEqual(st.mods.shot, 2, 'capped at two');
+  candy('rate'); candy('rate'); candy('rate'); candy('speed'); candy('range');
+  assert.strictEqual(st.mods.rate, 2, 'capped at two');
   assert.strictEqual(st.mods.speed, 1);
+  assert.strictEqual(st.mods.range, 1);
   const x0 = st.player.x; run(st, 0.5, { dx: 1, jump: false, shoot: false });
   assert.ok(st.player.x - x0 > L.PLAYER_SPEED * 0.5 * 1.1, 'faster');
+  st.player.face = 1; st.player.cool = 0; L.shoot(st);
+  assert.ok(st.bubbles[0].vx > 150 * 1.2, 'the bubble goes farther');
   sitting(st, 'zen', st.player.x);
   st.player.invuln = 0; run(st, 0.1);
-  assert.deepStrictEqual(st.mods, { speed: 0, shot: 0, range: 0 });
+  assert.deepStrictEqual(st.mods, { speed: 0, rate: 0, range: 0 });
+});
+
+test('candies come from what you do: 35 bubbles blown, 35 bubbles popped, 15 times on a bubble; one per level', () => {
+  const st = calm();
+  st.counts.blown = L.CANDY_AT.rate - 1;
+  st.player.face = 1; st.player.cool = 0;
+  L.shoot(st);
+  const candies = () => st.items.filter((i) => i.kind === 'candy');
+  assert.strictEqual(candies().length, 1);
+  assert.strictEqual(candies()[0].type, 'rate');
+  assert.strictEqual(st.counts.blown, 0);
+  st.counts.popped = L.CANDY_AT.range; L.checkCandy(st);
+  assert.strictEqual(candies().length, 1, 'only one candy a level');
+  assert.strictEqual(st.counts.popped, L.CANDY_AT.range, 'the count waits');
+  const s2 = calm();
+  s2.counts = { blown: 99, popped: 99, bounced: 99 };
+  L.checkCandy(s2);
+  assert.strictEqual(s2.items[0].type, 'speed', 'shoes first, then range, then rate');
+  const s3 = L.newGame(L.rng(5));
+  s3.queue = []; s3.enemies = [];
+  const b = { id: 1, x: 100, y: 100, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: { kind: 'zen', angry: false }, life: 6, dead: false };
+  s3.bubbles.push(b);
+  s3.items.push({ x: 50, y: 50, w: 10, h: 10, vx: 0, vy: 0, kind: 'candy', type: 'rate', age: 0 });
+  L.popBubble(s3, b, true);
+  run(s3, 0.1);
+  assert.strictEqual(s3.phase, 'clear');
+  assert.ok(!s3.items.some((i) => i.kind === 'candy'), 'the candy is gone when the last enemy pops');
+  assert.strictEqual(L.CANDY_AT.speed, 15);
+});
+
+test('standing on a bubble counts toward the shoes', () => {
+  const st = calm();
+  st.bubbles.push({ id: ++st.seq, x: 100, y: 130, vx: 0, vy: -28, r: 8, age: 2, phase: 'float', enemy: null, life: 8, dead: false });
+  st.player.x = 93; st.player.y = 100; st.player.vy = 40;
+  run(st, 0.4);
+  assert.strictEqual(st.counts.bounced, 1);
+});
+
+test('EXTEND letters: three trapped enemies popped in a row give one letter bubble, four give two', () => {
+  const mk = (st, n) => { for (let i = 0; i < n; i++) { const b = { id: ++st.seq, x: 40 + i * 30, y: 80, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: { kind: 'zen', angry: false }, life: 5, dead: false }; st.bubbles.push(b); L.popBubble(st, b, true); } };
+  const a = calm(); mk(a, 2);
+  assert.strictEqual(a.bubbles.filter((b) => b.letter !== undefined).length, 0);
+  const b3 = calm(); mk(b3, 3);
+  assert.strictEqual(b3.bubbles.filter((b) => b.letter !== undefined).length, 1);
+  const b4 = calm(); mk(b4, 4);
+  const letters = b4.bubbles.filter((b) => b.letter !== undefined);
+  assert.strictEqual(letters.length, 2);
+  assert.notStrictEqual(letters[0].letter, letters[1].letter);
+  assert.ok(letters[0].letter >= 0 && letters[0].letter < 6);
+  assert.deepStrictEqual(L.EXTEND_LETTERS, ['E', 'X', 'T', 'E', 'N', 'D']);
+  const s5 = calm(); s5.score = 0;
+  s5.bubbles = [];
+  const e = { id: 1, x: 10, y: 10, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: { kind: 'zen', angry: false }, life: 5, dead: false };
+  s5.bubbles.push(e); L.popBubble(s5, e, true);
+  s5.time += 5;
+  assert.strictEqual(s5.bubbles.filter((b) => b.letter !== undefined).length, 0, 'a pause starts a new chain');
+});
+
+test('collecting all six EXTEND letters gives a life and skips the level', () => {
+  const st = calm();
+  st.enemies.push({ x: 100, y: 100, w: 14, h: 14, vx: 0, vy: 0, ground: false, id: 99, kind: 'zen', dir: 1, angry: false, prot: 0, think: 1e9, alive: true, ang: 0, anim: 0 });
+  for (let i = 0; i < 6; i++) {
+    const b = { id: ++st.seq, x: 60 + i * 20, y: 60, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: null, letter: i, life: 18, dead: false };
+    st.bubbles.push(b);
+    if (i < 5) { L.popBubble(st, b, true); assert.strictEqual(st.phase, 'play'); assert.ok(st.extend[i]); }
+  }
+  const lives = st.lives;
+  L.popBubble(st, st.bubbles[st.bubbles.length - 1], true);
+  assert.strictEqual(st.lives, lives + 1);
+  assert.strictEqual(st.phase, 'clear');
+  assert.strictEqual(st.enemies.length, 0);
+  assert.ok(st.events.some((e) => e.t === 'extend'));
+  assert.ok(st.extend.every((x) => !x), 'the letters start over');
+  run(st, 2.8);
+  assert.strictEqual(st.level, 2);
+});
+
+test('special bubbles float up now and then, and popping them burns the enemies into diamonds (7000 water, 8000 lightning, 9000 fire)', () => {
+  const st = calm();
+  sitting(st, 'zen', 40);
+  st.specialT = 0;
+  run(st, 0.1);
+  assert.strictEqual(st.bubbles.filter((b) => b.special).length, 1);
+  const kinds = new Set();
+  for (let i = 0; i < 60; i++) { const s = calm(); s.rand = L.rng(i); sitting(s, 'zen', 40); L.spawnSpecial(s); kinds.add(s.bubbles[0].special); }
+  assert.deepStrictEqual([...kinds].sort(), ['fire', 'lightning', 'water']);
+  for (const [type, pts] of [['water', 7000], ['lightning', 8000], ['fire', 9000]]) {
+    const s = calm();
+    s.player.x = 200;
+    const e = sitting(s, 'zen', 96);                                    // 바닥 발판 위
+    const b = { id: ++s.seq, x: 100, y: type === 'lightning' ? 169 : 150, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: null, special: type, life: 16, dead: false };
+    s.bubbles.push(b);
+    L.popBubble(s, b, true);
+    run(s, 1.5);
+    assert.ok(!e.alive, `${type} burns the enemy`);
+    const d = s.items.find((i) => i.kind === 'diamond');
+    assert.ok(d, `${type} leaves a diamond`);
+    assert.strictEqual(d.pts, pts);
+  }
+});
+
+test('a diamond is worth its points when you pick it up', () => {
+  const st = calm();
+  st.items.push({ x: st.player.x, y: st.player.y, w: 10, h: 10, vx: 0, vy: 0, ground: true, kind: 'diamond', type: 'water', pts: 7000, age: 0 });
+  run(st, 0.05);
+  assert.strictEqual(st.score, 7000);
+});
+
+test('extra lives come from the score at 30000, 100000, 400000, 1000000 and 2000000', () => {
+  assert.deepStrictEqual(L.EXTRA_LIFE_SCORES, [30000, 100000, 400000, 1000000, 2000000]);
+  const st = calm();
+  st.score = 99990; L.popBubble(st, { id: 1, x: 100, y: 100, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: { kind: 'zen' }, life: 5, dead: false }, true);
+  assert.strictEqual(st.lives, L.START_LIVES + 2, '30000 and 100000 are both passed');
+  st.time += 5;
+  st.score = 399950; L.popBubble(st, { id: 2, x: 100, y: 100, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: { kind: 'zen' }, life: 5, dead: false }, true);
+  assert.strictEqual(st.lives, L.START_LIVES + 3, 'then 400000');
+  const far = calm(); far.score = 3000000;
+  L.popBubble(far, { id: 3, x: 1, y: 1, vx: 0, vy: 0, r: 8, age: 1, phase: 'float', enemy: { kind: 'zen' }, life: 5, dead: false }, true);
+  assert.strictEqual(far.lives, L.START_LIVES + 5, 'no more lives from the score after the last threshold');
 });
 
 test('clearing the level: all enemies trapped and popped, then the next level starts', () => {

@@ -13,7 +13,11 @@ const START_LIVES = 3, INVULN = 2.6, RESPAWN = 1.4;
 const SHOT_COOL = 0.3, MAX_BUBBLES = 6;
 const BUBBLE_R = 8, TRAP_LIFE = 7, EMPTY_LIFE = 8;
 const HURRY_AT = 42, BARON_AT = 56;
-const EXTRA_LIFE_AT = 30000, EXTRA_LIFE_EVERY = 100000;
+const EXTRA_LIFE_SCORES = [30000, 100000, 400000, 1000000, 2000000];      // 점수로 얻는 목숨 (그 뒤로는 EXTEND 로만)
+const EXTEND_LETTERS = ['E', 'X', 'T', 'E', 'N', 'D'];
+const CANDY_AT = { speed: 15, range: 35, rate: 35 };           // 신발은 방울 위에 15번 올라서면, 거리 사탕은 방울을 35번 터뜨리면, 연사 사탕은 방울을 35번 뿜으면
+const CANDY_ORDER = ['speed', 'range', 'rate'];                   // 한꺼번에 조건이 차면 이 순서로 (한 판에 하나)
+const SPECIAL = { water: { pts: 7000, speed: 110, life: 6 }, fire: { pts: 9000, speed: 70, life: 5 }, lightning: { pts: 8000, speed: 300, life: 1 } };
 const CHAIN_WINDOW = 0.9;
 const KINDS = {
   zen: { w: 14, h: 14, speed: 36, fly: false, pts: 100 },
@@ -85,7 +89,8 @@ function newGame(rand = Math.random) {
   const st = {
     rand, score: 0, lives: START_LIVES, extra: 0, level: 1, time: 0, events: [], seq: 0,
     stats: { pops: 0, traps: 0, shots: 0 },
-    mods: { speed: 0, shot: 0, range: 0 },                     // 사탕으로 얻은 힘
+    mods: { speed: 0, rate: 0, range: 0 },                     // 사탕·신발로 얻은 힘 (각각 두 번까지)
+    counts: { blown: 0, popped: 0, bounced: 0 }, extend: new Array(6).fill(false),
     player: null, phase: 'play',
   };
   startLevel(st, 1);
@@ -100,6 +105,7 @@ function startLevel(st, level) {
   st.queue = enemyList(level, st.rand);
   st.enemies = []; st.bubbles = []; st.items = []; st.baron = null;
   st.hurry = false; st.chain = { n: 0, t: 0 };
+  st.effects = []; st.candyThisLevel = false; st.specialT = 8 + st.rand() * 6;
   const floorY = FLOOR_ROW * TILE;
   const p = newBody(24, floorY - PLAYER_H, PLAYER_W, PLAYER_H);
   st.player = Object.assign(p, { alive: true, face: 1, invuln: INVULN, cool: 0, respawn: 0, ride: null, coyote: 0, anim: 0 });
@@ -137,8 +143,7 @@ function walls(b) {
 // ---------- 시작 ----------
 function addScore(st, n) {
   st.score += n;
-  const need = () => (st.extra === 0 ? EXTRA_LIFE_AT : EXTRA_LIFE_AT + st.extra * EXTRA_LIFE_EVERY);
-  while (st.score >= need()) { st.extra++; st.lives++; emit(st, { t: 'extraLife' }); }
+  while (st.extra < EXTRA_LIFE_SCORES.length && st.score >= EXTRA_LIFE_SCORES[st.extra]) { st.extra++; st.lives++; emit(st, { t: 'extraLife' }); }
 }
 
 function spawnEnemy(st, s) {
@@ -154,12 +159,13 @@ function spawnEnemy(st, s) {
 function shoot(st) {
   const p = st.player;
   if (p.cool > 0 || st.bubbles.length >= MAX_BUBBLES + st.mods.range) return;
-  const sp = 150 + 45 * st.mods.shot + 12 * st.mods.range;
+  const sp = 150 * (1 + 0.28 * st.mods.range);
   st.bubbles.push({
     id: ++st.seq, x: p.x + p.w / 2 + p.face * 14, y: p.y + p.h / 2 - 1, vx: p.face * sp, vy: -4, r: BUBBLE_R, age: 0, phase: 'shot', enemy: null, life: EMPTY_LIFE, dead: false,
   });
-  p.cool = SHOT_COOL / (1 + 0.35 * st.mods.shot);
+  p.cool = SHOT_COOL / (1 + 0.45 * st.mods.rate);
   st.stats.shots++;
+  st.counts.blown++; checkCandy(st);
   emit(st, { t: 'shoot' });
 }
 
@@ -168,7 +174,7 @@ function playerHit(st, why) {
   if (!p.alive || p.invuln > 0) return;
   p.alive = false; p.ride = null;
   st.lives--;
-  st.mods = { speed: 0, shot: 0, range: 0 };
+  st.mods = { speed: 0, rate: 0, range: 0 };
   emit(st, { t: 'crash', x: p.x, y: p.y, why });
   p.respawn = RESPAWN;
   if (st.lives <= 0) { st.phase = 'dying'; st.phaseT = 2.2; }
@@ -176,6 +182,9 @@ function playerHit(st, why) {
 
 function popBubble(st, b, byPlayer) {
   b.dead = true;
+  if (byPlayer) { st.counts.popped++; checkCandy(st); }
+  if (b.letter !== undefined) { collectLetter(st, b); return; }
+  if (b.special) { triggerSpecial(st, b); return; }
   if (!b.enemy) { emit(st, { t: 'pop', x: b.x, y: b.y, trapped: false }); return; }
   // 갇힌 적이 터진다: 연쇄로 터뜨릴수록 점수가 두 배씩
   if (st.time - st.chain.t > CHAIN_WINDOW) st.chain.n = 0;
@@ -185,10 +194,100 @@ function popBubble(st, b, byPlayer) {
   addScore(st, pts);
   st.stats.pops++;
   emit(st, { t: 'kill', x: b.x, y: b.y, pts, kind: b.enemy.kind, chain: st.chain.n });
+  if (st.chain.n >= 3) spawnLetter(st, b.x, b.y);                                    // 세 마리째부터 한 마리마다 EXTEND 글자 방울이 하나씩 나온다
   const fruit = FRUITS[Math.min(FRUITS.length - 1, Math.floor((st.level - 1) / 2))];
-  const r = st.rand();
-  if (r < 0.2) st.items.push(Object.assign(newBody(b.x - 5, b.y - 5, 10, 10), { kind: 'candy', type: ['speed', 'shot', 'range'][Math.floor(st.rand() * 3)], age: 0, vy: -80 }));
-  else st.items.push(Object.assign(newBody(b.x - 5, b.y - 5, 10, 10), { kind: 'fruit', type: fruit, pts: 500 + 100 * (st.level - 1), age: 0, vy: -90 }));
+  st.items.push(Object.assign(newBody(b.x - 5, b.y - 5, 10, 10), { kind: 'fruit', type: fruit, pts: 500 + 100 * (st.level - 1), age: 0, vy: -90 }));
+}
+
+// ---------- 사탕 · EXTEND · 특수 방울 ----------
+function dropCandy(st, type) {
+  st.candyThisLevel = true;
+  st.items.push(Object.assign(newBody(40 + st.rand() * 170, WALL, 10, 10), { kind: 'candy', type, age: 0 }));
+  emit(st, { t: 'candyDrop', type });
+}
+// 쏜 수·터뜨린 수·방울 위에 올라선 수가 차면 사탕이 떨어진다 (한 판에 하나, 판이 끝나면 사라진다)
+function checkCandy(st) {
+  if (st.candyThisLevel || st.phase !== 'play') return;
+  const key = { speed: 'bounced', range: 'popped', rate: 'blown' };
+  for (const type of CANDY_ORDER) {
+    if (st.counts[key[type]] >= CANDY_AT[type] && st.mods[type] < 2) { st.counts[key[type]] = 0; dropCandy(st, type); return; }
+  }
+}
+function spawnLetter(st, x, y) {
+  const left = [0, 1, 2, 3, 4, 5].filter((i) => !st.extend[i] && !st.bubbles.some((b) => b.letter === i));
+  if (!left.length) return;
+  const idx = left[Math.floor(st.rand() * left.length)];
+  st.bubbles.push({ id: ++st.seq, x, y, vx: (st.rand() - 0.5) * 20, vy: -26, r: BUBBLE_R, age: 0, phase: 'float', enemy: null, letter: idx, life: 18, dead: false });
+  emit(st, { t: 'letter', idx, spawned: true });
+}
+function collectLetter(st, b) {
+  st.extend[b.letter] = true;
+  emit(st, { t: 'letter', idx: b.letter, x: b.x, y: b.y, letter: EXTEND_LETTERS[b.letter] });
+  if (st.extend.every(Boolean)) {                                                    // EXTEND 완성: 목숨 +1, 이 판은 건너뛴다
+    st.extend = new Array(6).fill(false);
+    st.lives++;
+    emit(st, { t: 'extend' }); emit(st, { t: 'extraLife' });
+    st.enemies = []; st.queue = [];
+    for (const o of st.bubbles) if (o.enemy) o.dead = true;
+    st.effects = [];
+    st.phase = 'clear'; st.phaseT = 2.6;
+    emit(st, { t: 'clear', level: st.level, skipped: true });
+  }
+}
+function triggerSpecial(st, b) {
+  const type = b.special;
+  emit(st, { t: 'special', type, x: b.x, y: b.y });
+  if (type === 'lightning') { for (const dir of [-1, 1]) st.effects.push({ kind: 'bolt', type, x: b.x, y: b.y, ox: b.x, dir, t: 0, life: SPECIAL.lightning.life }); }
+  else st.effects.push({ kind: 'flow', type, x: b.x, y: b.y, w: 8, h: 6, dir: 0, vy: 40, t: 0, life: SPECIAL[type].life });
+}
+function spawnSpecial(st) {
+  const type = ['water', 'lightning', 'fire'][Math.floor(st.rand() * 3)];
+  st.bubbles.push({ id: ++st.seq, x: 40 + st.rand() * 176, y: FLOOR_ROW * TILE - 6, vx: (st.rand() - 0.5) * 16, vy: -28, r: BUBBLE_R, age: 0, phase: 'float', enemy: null, special: type, life: 16, dead: false });
+  emit(st, { t: 'specialBubble', type });
+}
+function burn(st, e, type) {                                                         // 적이 보석으로 바뀐다
+  e.alive = false;
+  st.stats.burned = (st.stats.burned || 0) + 1;
+  st.items.push(Object.assign(newBody(e.x + e.w / 2 - 5, e.y, 10, 10), { kind: 'diamond', type, pts: SPECIAL[type].pts, age: 0, vy: -70 }));
+  emit(st, { t: 'burn', type, x: e.x, y: e.y });
+}
+function updateEffects(st, h) {
+  const out = [];
+  for (const f of st.effects) {
+    f.t += h;
+    if (f.t > f.life) continue;
+    if (f.kind === 'bolt') {
+      f.x += f.dir * SPECIAL.lightning.speed * h;
+      if (f.x < -10 || f.x > W + 10) continue;
+      for (const e of st.enemies) {
+        const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
+        if (e.alive && Math.abs(f.y - ey) < 10 && (f.dir > 0 ? ex > f.ox - 4 && ex < f.x + 4 : ex < f.ox + 4 && ex > f.x - 4)) burn(st, e, 'lightning');
+      }
+      out.push(f); continue;
+    }
+    // 물 · 불: 떨어지다 발판 위에 닿으면 양쪽으로 퍼져 흐른다
+    const sp = SPECIAL[f.type].speed;
+    const prevFeet = f.y + f.h;
+    if (f.dir !== 0) f.x += f.dir * sp * h;
+    f.vy = Math.min(260, f.vy + 520 * h);
+    let ny = f.y + f.vy * h;
+    const col = Math.floor(f.x / TILE);
+    let landed = false;
+    for (let r = Math.ceil((prevFeet - 0.01) / TILE); r <= Math.floor((ny + f.h) / TILE); r++) {
+      if (tileAt(st, col, r) === 2) { ny = r * TILE - f.h; f.vy = 0; landed = true; break; }
+    }
+    f.y = ny;
+    if (landed && f.dir === 0) {                                                       // 처음 닿으면 둘로 갈라진다
+      for (const dir of [-1, 1]) out.push({ ...f, dir, vy: 0, t: f.t });
+      continue;
+    }
+    if (f.y > H || f.x < WALL - 4 || f.x > W - WALL + 4) continue;
+    for (const e of st.enemies) {
+      if (e.alive && Math.abs(f.x - (e.x + e.w / 2)) < 10 && Math.abs(f.y + f.h / 2 - (e.y + e.h / 2)) < 10) burn(st, e, f.type);
+    }
+    out.push(f);
+  }
+  st.effects = out;
 }
 
 function trap(st, b, e) {
@@ -221,6 +320,9 @@ function sub(st, h, input) {
   // 서두르기 · 훼방꾼 고래
   if (live && !st.hurry && st.t >= HURRY_AT) { st.hurry = true; for (const e of st.enemies) e.angry = true; emit(st, { t: 'hurry' }); }
   if (live && !st.baron && st.t >= BARON_AT) { st.baron = Object.assign(newBody(WALL + 4, WALL + 4, 18, 16), { kind: 'baron', anim: 0 }); emit(st, { t: 'baron' }); }
+
+  // 특수 방울(물·번개·불)이 가끔 떠오른다
+  if (live && st.enemies.length) { st.specialT -= h; if (st.specialT <= 0) { if (!st.bubbles.some((b) => b.special)) spawnSpecial(st); st.specialT = 14 + st.rand() * 8; } }
 
   // 나올 적
   if (live) while (st.queue.length && st.queue[0].at <= st.t) spawnEnemy(st, st.queue.shift());
@@ -281,13 +383,14 @@ function sub(st, h, input) {
   }
   // 방울이 적을 가둔다
   for (const b of st.bubbles) {
-    if (b.dead || b.enemy) continue;
+    if (b.dead || b.enemy || b.letter !== undefined || b.special) continue;
     for (const e of st.enemies) {
       if (!e.alive || e.prot > 0) continue;
       const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
       if ((b.x - ex) ** 2 + (b.y - ey) ** 2 < 12 * 12) { trap(st, b, e); break; }
     }
   }
+  updateEffects(st, h);
   st.enemies = st.enemies.filter((e) => e.alive);
 
   // 내 캐릭터와 방울: 위에서 내려앉으면 타고, 옆이나 아래에서 닿으면 터뜨린다
@@ -299,7 +402,7 @@ function sub(st, h, input) {
       if (dxp * dxp + dyp * dyp > (b.r + 6) * (b.r + 6)) continue;
       const feet = p.y + p.h;
       if (feet <= b.y - b.r * 0.2 + 3) {                                                  // 방울 위쪽: 내려앉으면 타고, 아니면 그냥 지나간다
-        if (!p.ride && p.vy >= 0 && Math.abs(dxp) < b.r + 3) { if (b.y - b.r - p.h < WALL) popBubble(st, b, true); else { p.ride = b; p.y = b.y - b.r - p.h; p.vy = 0; p.ground = true; } }
+        if (!p.ride && p.vy >= 0 && Math.abs(dxp) < b.r + 3) { if (b.y - b.r - p.h < WALL) popBubble(st, b, true); else { p.ride = b; p.y = b.y - b.r - p.h; p.vy = 0; p.ground = true; st.counts.bounced++; checkCandy(st); } }
       } else if (p.ride !== b) popBubble(st, b, true);
     }
   }
@@ -375,6 +478,7 @@ function sub(st, h, input) {
     if (Math.abs(p.x + p.w / 2 - (it.x + it.w / 2)) < 10 && Math.abs(p.y + p.h / 2 - (it.y + it.h / 2)) < 10) {
       it.taken = true;
       if (it.kind === 'fruit') { addScore(st, it.pts); emit(st, { t: 'fruit', pts: it.pts, x: it.x, y: it.y, type: it.type }); }
+      else if (it.kind === 'diamond') { addScore(st, it.pts); emit(st, { t: 'diamond', pts: it.pts, x: it.x, y: it.y, type: it.type }); }
       else { addScore(st, 500); st.mods[it.type] = Math.min(2, st.mods[it.type] + 1); emit(st, { t: 'candy', type: it.type, x: it.x, y: it.y }); }
     }
   }
@@ -383,14 +487,15 @@ function sub(st, h, input) {
   // 판 깨기
   if (live && st.queue.length === 0 && st.enemies.length === 0 && !st.bubbles.some((b) => b.enemy)) {
     st.phase = 'clear'; st.phaseT = 3;
+    st.items = st.items.filter((i) => i.kind !== 'candy');                               // 사탕은 마지막 적을 터뜨리면 사라진다
     emit(st, { t: 'clear', level: st.level });
   }
 }
 
 return {
   W, H, TILE, COLS, ROWS, WALL, FLOOR_ROW, TIER_ROWS, FLOOR_GAP, GRAVITY, JUMP_V, PLAYER_SPEED, START_LIVES, SHOT_COOL, MAX_BUBBLES, BUBBLE_R,
-  TRAP_LIFE, EMPTY_LIFE, HURRY_AT, BARON_AT, KINDS, MAPS, FRUITS,
-  rng, buildTiles, enemyList, newGame, startLevel, step, tileAt, spawnEnemy, shoot, popBubble, trap, playerHit,
+  TRAP_LIFE, EMPTY_LIFE, HURRY_AT, BARON_AT, KINDS, MAPS, FRUITS, EXTEND_LETTERS, CANDY_AT, SPECIAL, EXTRA_LIFE_SCORES,
+  rng, buildTiles, enemyList, newGame, startLevel, step, tileAt, spawnEnemy, shoot, popBubble, trap, playerHit, spawnLetter, spawnSpecial, checkCandy, dropCandy, triggerSpecial, burn,
 };
 })();
 if (typeof module !== 'undefined') module.exports = LOGIC_BUBBLE;

@@ -64,6 +64,10 @@ const sfx = {
   start: () => melody([392, 523, 659, 784, 1047], 100),
   clear: () => melody([523, 659, 784, 1047, 1319, 1568], 100),
   hurry: () => melody([880, 0, 880, 0, 880], 130, 'sawtooth', 0.05),
+  letter: () => melody([880, 1175], 70, 'sine', 0.07),
+  extend: () => melody([523, 659, 784, 1047, 1319, 1568, 2093], 90, 'square', 0.05),
+  special: (t) => (t === 'water' ? melody([600, 500, 400, 300], 70, 'sine', 0.07) : t === 'lightning' ? melody([1500, 400, 1800, 300], 40, 'sawtooth', 0.05) : melody([200, 260, 220, 300], 70, 'sawtooth', 0.05)),
+  diamond: () => melody([1320, 1760, 2093, 2637], 55, 'sine', 0.07),
   over: () => melody([392, 330, 262, 196], 220, 'sawtooth', 0.06),
 };
 
@@ -182,7 +186,14 @@ function handleEvents() {
       for (let i = 0; i < 6; i++) fxs.push({ kind: 'spark', x: e.x, y: e.y, t: 0, life: 0.5, a: i * 1.05 + 0.3 });
     }
     else if (e.t === 'fruit') { sfx.fruit(); tutorialSignal('pickup'); fxs.push({ kind: 'text', x: e.x, y: e.y - 4, t: 0, life: 0.9, text: String(e.pts), color: '#ffe14a' }); }
-    else if (e.t === 'candy') { sfx.candy(); tutorialSignal('pickup'); fxs.push({ kind: 'text', x: e.x, y: e.y - 4, t: 0, life: 1, text: { speed: 'SPEED UP', shot: 'BUBBLE UP', range: 'RANGE UP' }[e.type], color: '#7fe0ff' }); }
+    else if (e.t === 'candy') { sfx.candy(); tutorialSignal('pickup'); fxs.push({ kind: 'text', x: e.x, y: e.y - 4, t: 0, life: 1, text: { speed: 'SPEED UP', rate: 'RATE UP', range: 'RANGE UP' }[e.type], color: '#7fe0ff' }); }
+    else if (e.t === 'candyDrop') setBanner('사탕이 나왔어요!', '', '#7fe0ff', 1.6);
+    else if (e.t === 'letter') { if (e.spawned) sfx.letter(); else { sfx.letter(); fxs.push({ kind: 'text', x: e.x, y: e.y - 4, t: 0, life: 1, text: e.letter, color: '#ffe14a' }); } }
+    else if (e.t === 'extend') { sfx.extend(); setBanner('EXTEND!', '목숨 +1 · 다음 판으로', '#ffe14a', 2.6); }
+    else if (e.t === 'special') { sfx.special(e.type); fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.4 }); if (e.type === 'lightning') fxs.push({ kind: 'flash', x: 0, y: 0, t: 0, life: 0.25 }); }
+    else if (e.t === 'burn') { sfx.kill(6); fxs.push({ kind: 'ring', x: e.x + 7, y: e.y + 7, t: 0, life: 0.4 }); tutorialSignal('kill'); }
+    else if (e.t === 'diamond') { sfx.diamond(); tutorialSignal('pickup'); fxs.push({ kind: 'text', x: e.x, y: e.y - 4, t: 0, life: 1.1, text: String(e.pts), color: '#7fe0ff' }); }
+    else if (e.t === 'specialBubble') sfx.letter();
     else if (e.t === 'crash') sfx.crash();
     else if (e.t === 'break') { sfx.brk(); fxs.push({ kind: 'ring', x: e.x, y: e.y, t: 0, life: 0.3, red: true }); }
     else if (e.t === 'extraLife') sfx.life();
@@ -296,6 +307,15 @@ function drawBubbles() {
     ctx.strokeStyle = warn ? '#ff8a7a' : '#d8f8ff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(cx, cy, b.r * wob - 0.5, b.r / wob - 0.5, 0, 0, 7); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(cx - 4, cy - 5, 3, 2); ctx.fillRect(cx - 5, cy - 3, 2, 2);
     if (b.enemy) drawEnemyBody(b.enemy.kind, cx, cy, warn || b.enemy.angry, clock, 1, 0.75);
+    if (b.letter !== undefined) { ctx.fillStyle = '#ffe14a'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(L.EXTEND_LETTERS[b.letter], cx, cy + 1); }
+    if (b.special) {
+      const col = { water: '#4a9aff', lightning: '#ffe14a', fire: '#ff6a3a' }[b.special];
+      ctx.fillStyle = col; ctx.beginPath();
+      if (b.special === 'water') { ctx.moveTo(cx, cy - 6); ctx.quadraticCurveTo(cx + 6, cy + 2, cx, cy + 6); ctx.quadraticCurveTo(cx - 6, cy + 2, cx, cy - 6); }
+      else if (b.special === 'lightning') { ctx.moveTo(cx + 1, cy - 7); ctx.lineTo(cx - 4, cy + 1); ctx.lineTo(cx, cy + 1); ctx.lineTo(cx - 1, cy + 7); ctx.lineTo(cx + 4, cy - 2); ctx.lineTo(cx, cy - 2); }
+      else { ctx.moveTo(cx, cy - 7); ctx.quadraticCurveTo(cx + 7, cy, cx + 2, cy + 6); ctx.lineTo(cx - 3, cy + 6); ctx.quadraticCurveTo(cx - 7, cy + 1, cx - 1, cy - 3); }
+      ctx.fill();
+    }
   }
 }
 const FRUIT_EMOJI = { cherry: '🍒', orange: '🍊', banana: '🍌', apple: '🍎', grape: '🍇', melon: '🍈', star: '⭐' };
@@ -305,9 +325,28 @@ function drawItems() {
     if (it.age > 10 && Math.floor(clock * 8) % 2 === 0) continue;
     const cx = it.x + it.w / 2, cy = HUD + it.y + it.h / 2;
     if (it.kind === 'fruit') ctx.fillText(FRUIT_EMOJI[it.type], cx, cy);
-    else {
-      ctx.fillStyle = { speed: '#4ac8ff', shot: '#ff6a8a', range: '#ffe14a' }[it.type]; ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, 7); ctx.fill();
+    else if (it.kind === 'diamond') {
+      ctx.fillStyle = { water: '#4a9aff', lightning: '#ffe14a', fire: '#ff5a3a' }[it.type]; ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx + 5, cy); ctx.lineTo(cx, cy + 6); ctx.lineTo(cx - 5, cy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(cx - 2, cy - 3, 2, 3);
+    } else if (it.type === 'speed') {
+      ctx.fillStyle = '#e8453a'; ctx.fillRect(cx - 5, cy - 1, 10, 5); ctx.fillStyle = '#fff'; ctx.fillRect(cx - 5, cy + 3, 10, 1); ctx.fillRect(cx - 5, cy - 4, 4, 3);
+    } else {
+      ctx.fillStyle = it.type === 'rate' ? '#4ae84a' : '#4a9aff'; ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, 7); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.fillRect(cx - 4, cy - 1, 8, 2);
+    }
+  }
+}
+function drawEffects() {
+  for (const f of G.effects) {
+    const x = f.x, y = HUD + f.y;
+    if (f.kind === 'bolt') {
+      ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(f.ox, y);
+      const steps = 10; for (let i = 1; i <= steps; i++) ctx.lineTo(f.ox + (x - f.ox) * i / steps, y + (i % 2 ? -3 : 3));
+      ctx.stroke();
+    } else if (f.type === 'water') {
+      ctx.fillStyle = '#4a9aff'; ctx.fillRect(x - 4, y - 1, 8, 7); ctx.fillStyle = '#9ad0ff'; ctx.fillRect(x - 3, y - 1, 6, 2);
+    } else {
+      ctx.fillStyle = Math.floor(clock * 14) % 2 ? '#ff5a2a' : '#ffb02a'; ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y + 6); ctx.lineTo(x - 5, y + 6); ctx.closePath(); ctx.fill();
     }
   }
 }
@@ -331,9 +370,11 @@ function drawHud() {
   }
   // 사탕으로 얻은 힘
   const m = G.mods;
-  ctx.textAlign = 'right'; ctx.font = 'bold 8px sans-serif';
   let x = W - 20;
-  for (const [k, c] of [['speed', '#4ac8ff'], ['shot', '#ff6a8a'], ['range', '#ffe14a']]) for (let i = 0; i < m[k]; i++) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, H + HUD - 7, 3.5, 0, 7); ctx.fill(); x -= 9; }
+  for (const [k, c] of [['speed', '#e8453a'], ['rate', '#4ae84a'], ['range', '#4a9aff']]) for (let i = 0; i < m[k]; i++) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, H + HUD - 7, 3.5, 0, 7); ctx.fill(); x -= 9; }
+  // EXTEND 글자: 모은 것은 밝게
+  ctx.textAlign = 'center'; ctx.font = 'bold 9px sans-serif';
+  for (let i = 0; i < 6; i++) { ctx.fillStyle = G.extend[i] ? '#ffe14a' : 'rgba(255,255,255,.28)'; ctx.fillText(L.EXTEND_LETTERS[i], W / 2 - 25 + i * 10, H + HUD - 7); }
 }
 function draw() {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, CH);
@@ -342,6 +383,7 @@ function draw() {
   drawBubbles();
   drawEnemies();
   drawPlayer();
+  drawEffects();
   drawFx();
   drawHud();
   if (banner.t > 0) {
